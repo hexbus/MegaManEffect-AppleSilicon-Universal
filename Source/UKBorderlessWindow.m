@@ -11,51 +11,70 @@
 
 @implementation UKBorderlessWindow
 
-// Designated Initializer:
--(id)   initWithContentRect: (NSRect)box styleMask: (unsigned long)sty backing: (NSBackingStoreType)bs defer: (BOOL)def
+// Designated initializer:
+- (instancetype)initWithContentRect:(NSRect)box
+                           styleMask:(NSWindowStyleMask)styleMask
+                             backing:(NSBackingStoreType)backingType
+                               defer:(BOOL)flag
 {
-	self = [super initWithContentRect:box styleMask: NSBorderlessWindowMask backing:bs defer: def];
-	
-	if( self != nil )
-	{
-		constrainRect = NO;
-	}
-	
-	return self;
+    /*
+     UKBorderlessWindow is always intentionally borderless, regardless
+     of the style mask supplied by older callers or Interface Builder.
+     */
+    self = [super initWithContentRect:box
+                            styleMask:NSWindowStyleMaskBorderless
+                              backing:backingType
+                                defer:flag];
+
+    if (self != nil) {
+        constrainRect = NO;
+    }
+
+    return self;
 }
 
 
 // Convenience initializer:
--(id)   initWithContentRect: (NSRect)box backing: (NSBackingStoreType)bs defer: (BOOL)def
+- (instancetype)initWithContentRect:(NSRect)box
+                             backing:(NSBackingStoreType)backingType
+                               defer:(BOOL)flag
 {
-	return [self initWithContentRect: box styleMask: NSBorderlessWindowMask backing: bs defer: def];
+    return [self initWithContentRect:box
+                           styleMask:NSWindowStyleMaskBorderless
+                             backing:backingType
+                               defer:flag];
 }
 
-// Borderless window by default return NO here, but we want a regular window:
--(BOOL) canBecomeKeyWindow
+
+// Borderless windows normally cannot become key windows.
+// This historical subclass allows it when needed.
+- (BOOL)canBecomeKeyWindow
 {
     return YES;
 }
 
-// Make sure our borderless window may even cover the menu bar if we desire so.
--(NSRect)   constrainFrameRect:(NSRect)frameRect toScreen:(NSScreen *)screen
+
+// Allow this borderless window to cover the menu bar unless constrained.
+- (NSRect)constrainFrameRect:(NSRect)frameRect
+                    toScreen:(NSScreen *)screen
 {
-	if( !constrainRect )
-		return frameRect;
-	else
-		return [super constrainFrameRect: frameRect toScreen: screen];
+    if (!constrainRect) {
+        return frameRect;
+    }
+
+    return [super constrainFrameRect:frameRect toScreen:screen];
 }
 
 
--(BOOL)	constrainRect
+- (BOOL)constrainRect
 {
     return constrainRect;
 }
 
--(void)	setConstrainRect: (BOOL)newConstrainRect
-{
-	constrainRect = newConstrainRect;
-}
 
+- (void)setConstrainRect:(BOOL)newConstrainRect
+{
+    constrainRect = newConstrainRect;
+}
 
 @end

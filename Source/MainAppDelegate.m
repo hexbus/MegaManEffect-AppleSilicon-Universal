@@ -1,178 +1,257 @@
 #import "MainAppDelegate.h"
 #import <AVFoundation/AVFoundation.h>
 
-@interface MainAppDelegate ()
-@property AVPlayerLayer *playerLayer;
-@end
-
 @implementation MainAppDelegate
 
-- (id)init
+- (instancetype)init
 {
-	self = [super init];
-	
-	// Create animationWindow
-	realAnimationWindow =
-    [[NSWindow alloc] initWithContentRect:NSZeroRect
-                                styleMask:NSBorderlessWindowMask
-                                  backing:NSBackingStoreBuffered
-                                    defer:NO];
-	
-	return self;
+    self = [super init];
+
+    if (self) {
+        /*
+         Create the full-screen animation window. This is a presentation
+         overlay only, so it does not need to become a key window or
+         participate in window restoration.
+         */
+        realAnimationWindow =
+        [[NSWindow alloc] initWithContentRect:NSZeroRect
+                                    styleMask:NSWindowStyleMaskBorderless
+                                      backing:NSBackingStoreBuffered
+                                        defer:NO];
+
+        [realAnimationWindow setRestorable:NO];
+    }
+
+    return self;
 }
 
 - (void)setupAnimationWindowWithHidden:(BOOL)hidden
 {
-    CGFloat alphaValue = 1.0;
-    if (hidden) {
-        alphaValue = 0.0;
+    CGFloat alphaValue = hidden ? 0.0 : 1.0;
+    NSScreen *screen = [[NSScreen screens] firstObject];
+
+    if (screen == nil) {
+        return;
     }
-    
-    // show animation window
+
+    NSRect screenFrame = [screen frame];
+
+    /*
+     Configure the full-screen animation presentation window.
+     It is intentionally displayed without becoming the key window.
+     */
     [realAnimationWindow setLevel:NSScreenSaverWindowLevel];
-    
-    [realAnimationWindow setFrame:[[[NSScreen screens] objectAtIndex:0] frame] display:YES];
-    
+    [realAnimationWindow setFrame:screenFrame display:YES];
+
+    /*
+     Configure the decorative strip window across the center of the screen.
+     */
     [strip setLevel:NSScreenSaverWindowLevel];
-    [strip orderWindow:NSWindowAbove relativeTo:[[stars window] windowNumber]];
-    
-    // create a
-    NSRect stripRect = NSMakeRect(0.0, (NSHeight([[[NSScreen screens] objectAtIndex:0] frame]) / 2 - 103.0), NSWidth([[[NSScreen screens] objectAtIndex:0] frame]), 206.0);
-    
+
+    NSRect stripRect = NSMakeRect(0.0,
+                                  (NSHeight(screenFrame) / 2.0) - 103.0,
+                                  NSWidth(screenFrame),
+                                  206.0);
+
     [strip setFrame:stripRect display:YES];
-    
-    NSRect newFrame = NSMakeRect(0.0, 0.0,
-                                 NSWidth([[[NSScreen screens] objectAtIndex:0] frame]),
-                                 NSHeight([[[NSScreen screens] objectAtIndex:0] frame]));
-    [stars setFrame:newFrame];
-    
-    // update video layer
-    [self.playerLayer setFrame:newFrame];
-    
-    [realAnimationWindow makeKeyAndOrderFront:self];
+
+    /*
+     Size the existing AVPlayerView to fill the animation window.
+     The XIB already provides this player view, so no separate
+     AVPlayerLayer is needed.
+     */
+    NSRect videoFrame = NSMakeRect(0.0,
+                                   0.0,
+                                   NSWidth(screenFrame),
+                                   NSHeight(screenFrame));
+
+    [stars setFrame:videoFrame];
+
+    [realAnimationWindow orderFront:self];
     [realAnimationWindow setAlphaValue:alphaValue];
-    
-    [strip makeKeyAndOrderFront:self];
+
+    [strip orderWindow:NSWindowAbove
+            relativeTo:[realAnimationWindow windowNumber]];
     [strip setAlphaValue:alphaValue];
 }
 
-- (IBAction)runEffect:(id)sender
+- (IBAction)runEffect:(NSNotification *)notification
 {
-	// get a list of the applications currently launched
-	NSArray *runningApps = [[NSWorkspace sharedWorkspace] runningApplications];
-	
-    for (NSRunningApplication *app in runningApps) {
-        if (![currentApps containsObject:app]) {
-			if ([_checkbox state] == NSOnState) {
-                
-				// set label to app name
-				[appName setStringValue:[app localizedName]];
-				
-				// create new NSImage from that app's icon
-				NSImage *icon = [app icon];
-				[icon setSize:NSMakeSize(128.0,128.0)];
-				
-				[iconView setImage: icon];
-				
-				// play sound
-				[mySound play];
-                
-                [stars.player seekToTime:CMTimeMakeWithSeconds(0.0f, NSEC_PER_SEC) toleranceBefore: kCMTimeZero toleranceAfter: kCMTimeZero];
-                
-                [self setupAnimationWindowWithHidden:NO];
-                
-				[stars.player play];
-                
-			}
-		}
+    if ([_checkbox state] != NSControlStateValueOn) {
+        return;
     }
-    
-	currentApps = runningApps;
+
+    /*
+     Do not start another animation while the current sound is still
+     playing or while the previous animation is fading out.
+     */
+    if ([mySound isPlaying] || timer != nil) {
+        return;
+    }
+
+    /*
+     NSWorkspaceDidLaunchApplicationNotification already contains the
+     application that launched. Using it directly avoids rescanning every
+     running application and retriggering the effect repeatedly.
+     */
+    NSRunningApplication *app =
+    [[notification userInfo] objectForKey:NSWorkspaceApplicationKey];
+
+    if (app == nil) {
+        return;
+    }
+
+    NSString *applicationName = [app localizedName];
+
+    if (applicationName != nil) {
+        [appName setStringValue:applicationName];
+    }
+
+    NSImage *icon = [app icon];
+
+    if (icon != nil) {
+        [icon setSize:NSMakeSize(128.0, 128.0)];
+        [iconView setImage:icon];
+    }
+
+    /*
+     Reset the movie before displaying the effect.
+     */
+    [stars.player pause];
+
+    [stars.player seekToTime:CMTimeMakeWithSeconds(0.0, NSEC_PER_SEC)
+              toleranceBefore:kCMTimeZero
+               toleranceAfter:kCMTimeZero];
+
+    [self setupAnimationWindowWithHidden:NO];
+
+    [mySound play];
+    [stars.player play];
 }
 
 - (void)endEffect
 {
-	timer = [NSTimer scheduledTimerWithTimeInterval:0.05
-                                            target:self
-                                            selector:@selector(fadeEffectOut)
-                                            userInfo:nil
+    if (timer != nil) {
+        [timer invalidate];
+        timer = nil;
+    }
+
+    timer = [NSTimer scheduledTimerWithTimeInterval:0.05
+                                             target:self
+                                           selector:@selector(fadeEffectOut)
+                                           userInfo:nil
                                             repeats:YES];
 }
 
 - (void)fadeEffectOut
 {
-	if ([realAnimationWindow alphaValue] > 0.0) {
-		[realAnimationWindow setAlphaValue:([realAnimationWindow alphaValue] - 0.1)];
-		[strip setAlphaValue:([strip alphaValue] - 0.1)];
-	} else {
-		[timer invalidate];
-	}
+    CGFloat currentAlpha = [realAnimationWindow alphaValue];
+
+    if (currentAlpha > 0.0) {
+        CGFloat newAlpha = MAX(0.0, currentAlpha - 0.1);
+
+        [realAnimationWindow setAlphaValue:newAlpha];
+        [strip setAlphaValue:newAlpha];
+    } else {
+        [timer invalidate];
+        timer = nil;
+
+        [realAnimationWindow orderOut:self];
+        [strip orderOut:self];
+    }
 }
 
-- (void)sound:(NSSound *)sound didFinishPlaying:(BOOL)aBool
+- (void)sound:(NSSound *)sound didFinishPlaying:(BOOL)finishedPlaying
 {
-	if (aBool) {
-		[stars.player pause];
-		// when sound is done, endEffect
-		[self endEffect];
-	}
+    if (finishedPlaying) {
+        [stars.player pause];
+
+        /*
+         When the sound finishes, fade the visual effect out.
+         */
+        [self endEffect];
+    }
 }
 
-- (void)applicationDidFinishLaunching:(NSNotification *)aNotification
+- (void)applicationDidFinishLaunching:(NSNotification *)notification
 {
-	mySound = [NSSound soundNamed:@"effect_sound"];
-	[mySound setDelegate:self];
-	
-	// Get notification center
-	notCenter = [[NSWorkspace sharedWorkspace] notificationCenter];
-	
-	// get a list of all currently running applications
-	currentApps = [[NSWorkspace sharedWorkspace] runningApplications];
-	
-	// sign up for notifications when applications launch
-	[notCenter addObserver:self
+    /*
+     These windows are temporary UI and should not be restored by AppKit
+     during the next application launch.
+     */
+    [_window setRestorable:NO];
+    [animationWindow setRestorable:NO];
+    [strip setRestorable:NO];
+
+    mySound = [NSSound soundNamed:@"effect_sound"];
+    [mySound setDelegate:self];
+
+    /*
+     Observe applications launched after MegaManEffect has started.
+     */
+    notCenter = [[NSWorkspace sharedWorkspace] notificationCenter];
+
+    [notCenter addObserver:self
                   selector:@selector(runEffect:)
                       name:NSWorkspaceDidLaunchApplicationNotification
-                    object:nil]; // Register for all notifications
-	
-	NSView *view = [animationWindow contentView];
-	[animationWindow setContentView:nil];
-	[realAnimationWindow setContentView:view];
-	
-	// create movie
-	NSString *pathToMovie = [[NSBundle mainBundle] pathForResource:@"stars2" ofType:@"mov"];
+                    object:nil];
 
-    myMoviePlayer = [[AVPlayer alloc] initWithURL:
-                     [NSURL fileURLWithPath: pathToMovie]];
-    
-    self.playerLayer = [AVPlayerLayer playerLayerWithPlayer:myMoviePlayer];
-    [stars setWantsLayer:YES];
-    [stars.layer addSublayer:self.playerLayer];
-    [self.playerLayer setVideoGravity:AVLayerVideoGravityResizeAspectFill];
+    /*
+     Move the animation view from its XIB placeholder window into the
+     full-screen borderless presentation window.
+     */
+    NSView *view = [animationWindow contentView];
+    [animationWindow setContentView:nil];
+    [realAnimationWindow setContentView:view];
 
-    
-	// set movie to movie view
-    stars.player = myMoviePlayer;
-    
-	[strip setAlphaValue:0.0];
-    [strip setBackgroundColor:[NSColor colorWithPatternImage:[NSImage imageNamed:@"strip.png"]]];
+    /*
+     Create the movie player and attach it directly to the AVPlayerView
+     defined in MainMenu.xib.
+     */
+    NSString *pathToMovie = [[NSBundle mainBundle] pathForResource:@"stars2"
+                                                             ofType:@"mov"];
 
-	[strip orderWindow:NSWindowAbove relativeTo:[[stars window] windowNumber]];
-	
+    if (pathToMovie != nil) {
+        NSURL *movieURL = [NSURL fileURLWithPath:pathToMovie];
+
+        myMoviePlayer = [[AVPlayer alloc] initWithURL:movieURL];
+
+        [stars setPlayer:myMoviePlayer];
+        [stars setVideoGravity:AVLayerVideoGravityResizeAspectFill];
+    }
+
+    [strip setAlphaValue:0.0];
+    [strip setBackgroundColor:
+     [NSColor colorWithPatternImage:[NSImage imageNamed:@"strip.png"]]];
+
     [_window makeKeyAndOrderFront:self];
-	
+
     [self setupAnimationWindowWithHidden:YES];
-    
-    return;
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender
-                    hasVisibleWindows:(BOOL)flag;
+                    hasVisibleWindows:(BOOL)flag
 {
-	[_window makeKeyAndOrderFront:self];
-	[strip makeKeyAndOrderFront:self];
-	
-	return YES;
+    [_window makeKeyAndOrderFront:self];
+
+    return YES;
+}
+
+- (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app
+{
+    return YES;
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification
+{
+    [notCenter removeObserver:self];
+
+    if (timer != nil) {
+        [timer invalidate];
+        timer = nil;
+    }
+
+    [stars.player pause];
 }
 
 @end
